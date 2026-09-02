@@ -1,9 +1,43 @@
 import { beforeEach, expect, test } from 'vitest';
+import '@testing-library/jest-dom';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import App from './App';
 
 beforeEach(() => {
   window.localStorage.clear();
+  window.localStorage.setItem('dental-note-maker.tech-name', 'Test Tech');
+});
+
+test('requires a Tech Name before opening the workspace', () => {
+  window.localStorage.removeItem('dental-note-maker.tech-name');
+  render(<App />);
+
+  expect(screen.getByRole('heading', { name: /start a clinical note/i })).toBeDefined();
+  fireEvent.change(screen.getByLabelText('Tech Name'), { target: { value: 'Jordan Tech' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+  expect(screen.getByRole('heading', { name: 'Clinical note' })).toBeDefined();
+  expect(screen.getByRole('button', { name: /jordan tech/i })).toBeDefined();
+});
+
+test('technician logoff clears the Tech Name and returns to startup', () => {
+  render(<App />);
+
+  fireEvent.click(screen.getByRole('button', { name: /log off tech/i }));
+
+  expect(screen.getByRole('heading', { name: /start a clinical note/i })).toBeDefined();
+  expect(window.localStorage.getItem('dental-note-maker.tech-name')).toBeNull();
+});
+
+test('local archive entries are labeled with the active technician', () => {
+  window.confirm = () => true;
+  render(<App />);
+
+  fireEvent.click(screen.getByRole('button', { name: /reset content/i }));
+  fireEvent.click(screen.getByRole('button', { name: /past 20 records/i }));
+
+  expect(screen.getByText('Test Tech · Local note')).toBeDefined();
+  expect(JSON.parse(window.localStorage.getItem('dental-note-maker.saved-notes'))[0].technicianName).toBe('Test Tech');
 });
 
 test('opens the text editor and saves text into the note', () => {
@@ -46,6 +80,344 @@ test('creates a labeled category text module in layout and output', () => {
     label: 'Assessment summary',
     text: 'Monitor sensitivity.',
   });
+});
+
+test('creates an O A P module with category and quick-fill preferences', () => {
+  render(<App />);
+  fireEvent.click(screen.getByRole('button', { name: /add module/i }));
+  fireEvent.change(screen.getByLabelText(/category/i), { target: { value: 'periodontal' } });
+  fireEvent.change(screen.getByLabelText(/module type/i), { target: { value: 'oap' } });
+  fireEvent.change(screen.getByLabelText(/component label/i), { target: { value: 'Problem 1' } });
+  fireEvent.click(screen.getByRole('dialog', { name: /add text module/i }).querySelector('button[type="submit"]'));
+
+  fireEvent.click(screen.getByText('Problem 1').closest('article'));
+  const editor = screen.getByRole('dialog', { name: 'Problem 1' });
+  fireEvent.change(editor.querySelector('#oap-observation'), { target: { value: 'Bleeding on probing.' } });
+  fireEvent.change(editor.querySelector('#oap-assessment'), { target: { value: 'Localized gingivitis.' } });
+  fireEvent.change(editor.querySelector('#oap-plan'), { target: { value: 'Improve home care.' } });
+  fireEvent.click(screen.getByRole('button', { name: /manage quick-fill preferences/i }));
+  fireEvent.click(screen.getByRole('button', { name: /add observation option/i }));
+  fireEvent.change(editor.querySelector('input[aria-label="Observation option 1"]'), { target: { value: 'No bleeding.' } });
+  fireEvent.click(screen.getByRole('button', { name: /save quick-fill preferences/i }));
+  fireEvent.click(screen.getByRole('button', { name: /save o \/ a \/ p/i }));
+
+  const savedNote = JSON.parse(window.localStorage.getItem('dental-note-maker.note'));
+  expect(savedNote.sections.find((section) => section.id === 'periodontal').elements[0]).toMatchObject({
+    category: 'periodontal',
+    moduleKind: 'oap',
+    observation: 'Bleeding on probing.',
+    quickFillOptions: { observation: ['No bleeding.'] },
+  });
+  expect(screen.getByRole('textbox', { name: 'Output preview' }).value).toContain('Problem 1: Observation: Bleeding on probing.\nAssessment: Localized gingivitis.');
+  expect(screen.getByRole('textbox', { name: 'Output preview' }).value).not.toContain('Plan: Improve home care.');
+});
+
+test('creates and saves a color-coded blood pressure module', () => {
+  render(<App />);
+  fireEvent.click(screen.getByRole('button', { name: /add module/i }));
+  fireEvent.change(screen.getByLabelText(/module type/i), { target: { value: 'bloodPressure' } });
+  fireEvent.change(screen.getByLabelText(/component label/i), { target: { value: 'Blood pressure' } });
+  fireEvent.click(screen.getByRole('dialog', { name: /add text module/i }).querySelector('button[type="submit"]'));
+
+  fireEvent.change(screen.getByLabelText('Blood pressure systolic'), { target: { value: '185' } });
+  expect(document.activeElement).toBe(screen.getByLabelText('Blood pressure diastolic'));
+  fireEvent.change(screen.getByLabelText('Blood pressure diastolic'), { target: { value: '122' } });
+
+  const bloodPressureCard = screen.getByLabelText('Blood pressure systolic').closest('article');
+  expect(bloodPressureCard.classList.contains('bp-status-danger')).toBe(true);
+  expect(screen.getByRole('textbox', { name: 'Output preview' }).value).toContain('Blood pressure: 185/122 mmHg');
+  expect(JSON.parse(window.localStorage.getItem('dental-note-maker.note')).sections[0].elements[0]).toMatchObject({
+    moduleKind: 'bloodPressure',
+    systolic: '185',
+    diastolic: '122',
+  });
+});
+
+test('creates a pain scale module and uses its internal label in output', () => {
+  render(<App />);
+  fireEvent.click(screen.getByRole('button', { name: /add module/i }));
+  fireEvent.change(screen.getByLabelText(/module type/i), { target: { value: 'painScale' } });
+  fireEvent.change(screen.getByLabelText(/component label/i), { target: { value: 'Pain score' } });
+  fireEvent.click(screen.getByRole('dialog', { name: /add text module/i }).querySelector('button[type="submit"]'));
+
+  const card = screen.getByText('Pain score').closest('article');
+  fireEvent.change(screen.getByRole('slider', { name: 'Pain score pain score' }), { target: { value: '6' } });
+  expect(screen.getByRole('textbox', { name: 'Output preview' }).value).toContain('Pain score: 6/10');
+
+  fireEvent.contextMenu(card);
+  fireEvent.change(screen.getByLabelText('Internal label'), { target: { value: 'Pain' } });
+  fireEvent.click(screen.getByRole('button', { name: /save properties/i }));
+
+  expect(screen.getByRole('textbox', { name: 'Output preview' }).value).toContain('Pain: 6/10');
+  expect(JSON.parse(window.localStorage.getItem('dental-note-maker.note')).sections[0].elements[0]).toMatchObject({ moduleKind: 'painScale', painScore: 6, internalLabel: 'Pain' });
+});
+
+test('creates an allergy alert module with presets, pregnancy detail, and free text', () => {
+  render(<App />);
+  fireEvent.click(screen.getByRole('button', { name: /add module/i }));
+  fireEvent.change(screen.getByLabelText(/module type/i), { target: { value: 'alert' } });
+  fireEvent.change(screen.getByLabelText(/component label/i), { target: { value: 'Alerts' } });
+  fireEvent.click(screen.getByRole('dialog', { name: /add text module/i }).querySelector('button[type="submit"]'));
+  fireEvent.click(screen.getByText('Alerts').closest('article'));
+
+  expect(screen.getByRole('checkbox', { name: /none \/ no known alerts/i }).checked).toBe(true);
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Penicillin' }));
+  expect(screen.getByRole('checkbox', { name: /none \/ no known alerts/i }).checked).toBe(false);
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Pregnant' }));
+  fireEvent.change(screen.getByLabelText('Pregnancy trimester'), { target: { value: 'Third trimester' } });
+  fireEvent.change(screen.getByLabelText(/other alert or relevant detail/i), { target: { value: 'Needs physician consult.' } });
+  fireEvent.click(screen.getByRole('button', { name: /save alerts/i }));
+
+  expect(screen.getByRole('textbox', { name: 'Output preview' }).value).toContain('Alert: Penicillin Allergy; Pregnant (Third trimester); Needs physician consult.');
+  expect(JSON.parse(window.localStorage.getItem('dental-note-maker.note')).sections[0].elements[0]).toMatchObject({
+    moduleKind: 'alert',
+    alertAllergies: ['Penicillin'],
+    alertConditions: ['Pregnant'],
+    pregnancyTrimester: 'Third trimester',
+    alertCustomText: 'Needs physician consult.',
+    alertNone: false,
+  });
+});
+
+test('treatment planning links populated OAP plans and classifies selected plan text', () => {
+  render(<App />);
+  fireEvent.click(screen.getByRole('button', { name: /add module/i }));
+  fireEvent.change(screen.getByLabelText(/module type/i), { target: { value: 'oap' } });
+  fireEvent.change(screen.getByLabelText(/component label/i), { target: { value: 'PERIO' } });
+  fireEvent.click(screen.getByRole('dialog', { name: /add text module/i }).querySelector('button[type="submit"]'));
+  fireEvent.click(screen.getByText('PERIO').closest('article'));
+  fireEvent.change(screen.getByLabelText('Plan'), { target: { value: 'Scaling and root planing' } });
+  const plan = screen.getByLabelText('Plan');
+  plan.setSelectionRange(0, 7);
+  fireEvent.contextMenu(plan);
+  fireEvent.click(screen.getByRole('button', { name: 'Class 3' }));
+  fireEvent.click(screen.getByRole('button', { name: /save o \/ a \/ p/i }));
+
+  fireEvent.click(screen.getByRole('button', { name: /add module/i }));
+  fireEvent.change(screen.getByLabelText(/module type/i), { target: { value: 'treatmentPlan' } });
+  fireEvent.change(screen.getByLabelText(/component label/i), { target: { value: 'Treatment Planning' } });
+  fireEvent.click(screen.getByRole('dialog', { name: /add text module/i }).querySelector('button[type="submit"]'));
+  fireEvent.click(screen.getByText('Treatment Planning').closest('article'));
+
+  const planner = screen.getByRole('dialog', { name: /treatment planning/i });
+  expect(planner).toHaveTextContent('PERIO');
+  expect(planner).toHaveTextContent('Scaling and root planing');
+  expect(planner.querySelector('input[type="radio"][value="3"]')).toBeDefined();
+  fireEvent.change(planner.querySelector('textarea[id^="treatment-plan-"]:not([readonly])'), { target: { value: 'Refer for periodontal therapy' } });
+  fireEvent.click(planner.querySelector('button.secondary-button'));
+
+  expect(screen.getByRole('dialog', { name: /treatment planning/i })).toBeNull();
+  expect(JSON.parse(window.localStorage.getItem('dental-note-maker.note')).sections.find((section) => section.id === 'periodontal').elements[0].plan).toBe('Refer for periodontal therapy');
+});
+
+test('treatment planning splits classified OAP chunks into separate class blocks', () => {
+  render(<App />);
+  fireEvent.click(screen.getByRole('button', { name: /add module/i }));
+  fireEvent.change(screen.getByLabelText(/module type/i), { target: { value: 'oap' } });
+  fireEvent.change(screen.getByLabelText(/component label/i), { target: { value: 'PERIO' } });
+  fireEvent.click(screen.getByRole('dialog', { name: /add text module/i }).querySelector('button[type="submit"]'));
+  fireEvent.click(screen.getByText('PERIO').closest('article'));
+  const plan = screen.getByLabelText('Plan');
+  fireEvent.change(plan, { target: { value: 'Class 3 procedure. Class 1 follow-up.' } });
+  plan.setSelectionRange(0, 20);
+  fireEvent.contextMenu(plan);
+  fireEvent.click(screen.getByRole('button', { name: 'Class 3' }));
+  fireEvent.click(screen.getByRole('button', { name: /save o \/ a \/ p/i }));
+  fireEvent.click(screen.getByRole('button', { name: /add module/i }));
+  fireEvent.change(screen.getByLabelText(/module type/i), { target: { value: 'treatmentPlan' } });
+  fireEvent.click(screen.getByRole('dialog', { name: /add text module/i }).querySelector('button[type="submit"]'));
+  fireEvent.click(screen.getByText('Clinical notes').closest('article'));
+
+  const planner = screen.getByRole('dialog', { name: /treatment planning/i });
+  expect(planner).toHaveTextContent('PERIO · Class 3');
+  expect(planner).toHaveTextContent('PERIO · Class 2');
+});
+
+test('treatment planning exposes delete controls and grouped class output', () => {
+  render(<App />);
+  fireEvent.click(screen.getByRole('button', { name: /add module/i }));
+  fireEvent.change(screen.getByLabelText(/module type/i), { target: { value: 'treatmentPlan' } });
+  fireEvent.change(screen.getByLabelText(/component label/i), { target: { value: 'Treatment Plan' } });
+  fireEvent.click(screen.getByRole('dialog', { name: /add text module/i }).querySelector('button[type="submit"]'));
+  fireEvent.click(screen.getByText('Treatment Plan').closest('article'));
+
+  const planner = screen.getByRole('dialog', { name: /treatment planning/i });
+  expect(planner).toHaveTextContent('Class 3');
+  expect(planner).toHaveTextContent('Class 2');
+  expect(planner.querySelectorAll('button[aria-label^="Delete"]').length).toBeGreaterThan(0);
+  fireEvent.click(planner.querySelector('button[aria-label^="Delete"]'));
+  expect(screen.getByRole('dialog', { name: /treatment planning/i })).toBeDefined();
+  fireEvent.click(screen.getByRole('button', { name: /close treatment planning/i }));
+  expect(screen.getByRole('textbox', { name: 'Output preview' }).value).toContain('Treatment Plan');
+});
+
+test('calculates local anesthetic totals and omits zero-use drugs', () => {
+  render(<App />);
+  fireEvent.click(screen.getByRole('button', { name: /add module/i }));
+  fireEvent.change(screen.getByLabelText(/module type/i), { target: { value: 'localAnesthetic' } });
+  fireEvent.change(screen.getByLabelText(/component label/i), { target: { value: 'Local anesthetic' } });
+  fireEvent.click(screen.getByRole('dialog', { name: /add text module/i }).querySelector('button[type="submit"]'));
+  fireEvent.click(screen.getByText('Local anesthetic').closest('article'));
+
+  fireEvent.change(screen.getByLabelText(/2% 34mg Lidocaine carpules/i), { target: { value: '1.5' } });
+  fireEvent.change(screen.getByLabelText(/4% 68mg Septocaine carpules/i), { target: { value: '0.5' } });
+  fireEvent.click(screen.getByRole('button', { name: /save anesthetic/i }));
+
+  expect(screen.getAllByText(/51mg 2%Lidocaine with 0.026 micrograms epi/).find((element) => element.tagName === 'P')).toBeDefined();
+  expect(screen.getAllByText(/34mg 4%Septocaine with 0.009 micrograms epi/).find((element) => element.tagName === 'P')).toBeDefined();
+  expect(screen.getByRole('textbox', { name: 'Output preview' }).value).toContain('Local anesthetic: 51mg 2%Lidocaine with 0.026 micrograms epi; 34mg 4%Septocaine with 0.009 micrograms epi; Topical anesthetic');
+  const savedNote = JSON.parse(window.localStorage.getItem('dental-note-maker.note'));
+  expect(savedNote.sections[0].elements[0]).toMatchObject({ moduleKind: 'localAnesthetic', topicalAnesthetic: true, anestheticEntries: { lidocaine: '1.5', septocaine: '0.5', marcaine: 0 } });
+});
+
+test('omits the local anesthetic output prefix when internal label is blank', () => {
+  render(<App />);
+  fireEvent.click(screen.getByRole('button', { name: /add module/i }));
+  fireEvent.change(screen.getByLabelText(/module type/i), { target: { value: 'localAnesthetic' } });
+  fireEvent.change(screen.getByLabelText(/component label/i), { target: { value: 'Anesthetic details' } });
+  fireEvent.click(screen.getByRole('dialog', { name: /add text module/i }).querySelector('button[type="submit"]'));
+  const card = screen.getByText('Anesthetic details').closest('article');
+  fireEvent.click(card);
+  fireEvent.change(screen.getByLabelText(/4% 68mg Septocaine carpules/i), { target: { value: '1.5' } });
+  fireEvent.click(screen.getByRole('button', { name: /save anesthetic/i }));
+  fireEvent.contextMenu(card);
+  fireEvent.change(screen.getByLabelText('Internal label'), { target: { value: '' } });
+  fireEvent.click(screen.getByRole('button', { name: /save properties/i }));
+
+  expect(screen.getByRole('textbox', { name: 'Output preview' }).value).toContain('102mg 4%Septocaine with 0.026 micrograms epi');
+  expect(screen.getByRole('textbox', { name: 'Output preview' }).value).not.toContain('Anesthetic details:');
+});
+
+test('saves custom blood pressure alert levels from element properties', () => {
+  render(<App />);
+  fireEvent.click(screen.getByRole('button', { name: /add module/i }));
+  fireEvent.change(screen.getByLabelText(/module type/i), { target: { value: 'bloodPressure' } });
+  fireEvent.change(screen.getByLabelText(/component label/i), { target: { value: 'Vitals BP' } });
+  fireEvent.click(screen.getByRole('dialog', { name: /add text module/i }).querySelector('button[type="submit"]'));
+  const card = screen.getByText('Vitals BP').closest('article');
+  fireEvent.contextMenu(card);
+  const properties = screen.getByRole('dialog', { name: /element properties/i });
+  fireEvent.change(screen.getByLabelText('Prehypertensive systolic maximum'), { target: { value: '139' } });
+  fireEvent.change(screen.getByLabelText('Hypertensive systolic minimum'), { target: { value: '140' } });
+  fireEvent.click(screen.getByRole('button', { name: /save properties/i }));
+
+  fireEvent.change(screen.getByLabelText('Vitals BP systolic'), { target: { value: '135' } });
+  fireEvent.change(screen.getByLabelText('Vitals BP diastolic'), { target: { value: '75' } });
+  expect(card.classList.contains('bp-status-prehypertensive')).toBe(true);
+  const savedNote = JSON.parse(window.localStorage.getItem('dental-note-maker.note'));
+  expect(savedNote.sections[0].elements[0].bloodPressureAlertLevels.hypertensiveSystolicMin).toBe(140);
+  expect(screen.getByRole('textbox', { name: 'Output preview' }).value).not.toContain('prehypertensive');
+});
+
+test('reset saves the current state, clears content, and preserves preferences', () => {
+  window.confirm = () => true;
+  render(<App />);
+  fireEvent.click(screen.getByRole('button', { name: /add module/i }));
+  fireEvent.change(screen.getByLabelText(/module type/i), { target: { value: 'oap' } });
+  fireEvent.change(screen.getByLabelText(/component label/i), { target: { value: 'Reset test' } });
+  fireEvent.click(screen.getByRole('dialog', { name: /add text module/i }).querySelector('button[type="submit"]'));
+  fireEvent.click(screen.getByText('Reset test').closest('article'));
+  fireEvent.change(screen.getByLabelText('Observation'), { target: { value: 'Entered content.' } });
+  fireEvent.click(screen.getByRole('button', { name: /save o \/ a \/ p/i }));
+
+  fireEvent.click(screen.getByRole('button', { name: /reset content/i }));
+
+  expect(screen.getByText('No text added to this component yet.')).toBeDefined();
+  expect(screen.getByRole('heading', { name: /saved states/i })).toBeDefined();
+  expect(JSON.parse(window.localStorage.getItem('dental-note-maker.note')).sections[0].elements[0]).toMatchObject({
+    moduleKind: 'oap',
+    observation: '',
+    quickFillOptions: { observation: [] },
+  });
+  expect(JSON.parse(window.localStorage.getItem('dental-note-maker.saved-notes'))[0].note.sections[0].elements[0].observation).toBe('Entered content.');
+});
+
+test('clicking a saved state restores its content', () => {
+  window.confirm = () => true;
+  render(<App />);
+  fireEvent.click(screen.getByRole('button', { name: /add module/i }));
+  fireEvent.change(screen.getByLabelText(/component label/i), { target: { value: 'Restore test' } });
+  fireEvent.click(screen.getByRole('dialog', { name: /add text module/i }).querySelector('button[type="submit"]'));
+  const card = screen.getByText('Restore test').closest('article');
+  fireEvent.click(card);
+  fireEvent.change(screen.getByLabelText('Clinical text'), { target: { value: 'Restore this content.' } });
+  fireEvent.click(screen.getByRole('button', { name: /save text/i }));
+  fireEvent.click(screen.getByRole('button', { name: /reset content/i }));
+  fireEvent.click(screen.getByRole('button', { name: /past 20 records/i }));
+  fireEvent.click(screen.getByRole('button', { name: /saved note/i }));
+
+  expect(screen.getByText('Restore this content.')).toBeDefined();
+});
+
+test('splits O A P fields and saves text labels in the output layout', () => {
+  render(<App />);
+  fireEvent.click(screen.getByRole('button', { name: /add module/i }));
+  fireEvent.change(screen.getByLabelText(/category/i), { target: { value: 'periodontal' } });
+  fireEvent.change(screen.getByLabelText(/module type/i), { target: { value: 'oap' } });
+  fireEvent.change(screen.getByLabelText(/component label/i), { target: { value: 'Problem 1' } });
+  fireEvent.click(screen.getByRole('dialog', { name: /add text module/i }).querySelector('button[type="submit"]'));
+  fireEvent.click(screen.getByText('Problem 1').closest('article'));
+  const editor = screen.getByRole('dialog', { name: 'Problem 1' });
+  fireEvent.change(editor.querySelector('#oap-observation'), { target: { value: 'Observed.' } });
+  fireEvent.change(editor.querySelector('#oap-assessment'), { target: { value: 'Assessed.' } });
+  fireEvent.change(editor.querySelector('#oap-plan'), { target: { value: 'Planned.' } });
+  fireEvent.click(screen.getByRole('button', { name: /save o \/ a \/ p/i }));
+
+  fireEvent.click(screen.getByRole('button', { name: 'Layout' }));
+  const layoutDialog = screen.getByRole('dialog', { name: /layout/i });
+  expect([...layoutDialog.querySelectorAll('.layout-element-label')].map((item) => item.textContent)).toEqual(expect.arrayContaining([
+    'Problem 1 - Observation',
+    'Problem 1 - Assessment',
+    'Problem 1 - Plan',
+  ]));
+  fireEvent.change(screen.getByLabelText('Text label'), { target: { value: 'Problem details' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Add label' }));
+  fireEvent.click(screen.getByRole('button', { name: /save layout/i }));
+
+  const preview = screen.getByRole('textbox', { name: 'Output preview' });
+  expect(preview.value).toContain('Periodontal Observation: Observed.');
+  expect(preview.value).toContain('Periodontal Assessment: Assessed.');
+  expect(preview.value).not.toContain('Periodontal Plan: Planned.');
+  expect(preview.value.endsWith('Problem details')).toBe(true);
+  const savedNote = JSON.parse(window.localStorage.getItem('dental-note-maker.note'));
+  expect(savedNote.layout).toEqual(expect.arrayContaining([
+    expect.objectContaining({ type: 'oap', field: 'observation', componentId: expect.any(String) }),
+    expect.objectContaining({ type: 'oap', field: 'assessment', componentId: expect.any(String) }),
+    expect.objectContaining({ type: 'oap', field: 'plan', componentId: expect.any(String) }),
+    expect.objectContaining({ type: 'label', label: 'Problem details' }),
+  ]));
+});
+
+test('Shift plus Enter saves and closes the O A P modal', () => {
+  render(<App />);
+  fireEvent.click(screen.getByRole('button', { name: /add module/i }));
+  fireEvent.change(screen.getByLabelText(/module type/i), { target: { value: 'oap' } });
+  fireEvent.change(screen.getByLabelText(/component label/i), { target: { value: 'Shortcut problem' } });
+  fireEvent.click(screen.getByRole('dialog', { name: /add text module/i }).querySelector('button[type="submit"]'));
+  fireEvent.click(screen.getByText('Shortcut problem').closest('article'));
+
+  const observation = screen.getByLabelText('Observation');
+  fireEvent.change(observation, { target: { value: 'Saved from shortcut.' } });
+  fireEvent.keyDown(observation, { key: 'Enter', shiftKey: true });
+
+  expect(screen.queryByRole('dialog', { name: 'Shortcut problem' })).toBeNull();
+  expect(JSON.parse(window.localStorage.getItem('dental-note-maker.note')).sections[0].elements[0].observation).toBe('Saved from shortcut.');
+});
+
+test('Shift plus Enter saves and closes the O A P modal without field focus', () => {
+  render(<App />);
+  fireEvent.click(screen.getByRole('button', { name: /add module/i }));
+  fireEvent.change(screen.getByLabelText(/module type/i), { target: { value: 'oap' } });
+  fireEvent.change(screen.getByLabelText(/component label/i), { target: { value: 'Unfocused problem' } });
+  fireEvent.click(screen.getByRole('dialog', { name: /add text module/i }).querySelector('button[type="submit"]'));
+  fireEvent.click(screen.getByText('Unfocused problem').closest('article'));
+
+  fireEvent.change(screen.getByLabelText('Plan'), { target: { value: 'Saved without field focus.' } });
+  document.activeElement?.blur();
+  fireEvent.keyDown(document.body, { key: 'Enter', shiftKey: true });
+
+  expect(screen.queryByRole('dialog', { name: 'Unfocused problem' })).toBeNull();
+  expect(JSON.parse(window.localStorage.getItem('dental-note-maker.note')).sections[0].elements[0].plan).toBe('Saved without field focus.');
 });
 
 test('orders chart output elements through the layout modal and preview', () => {
@@ -97,6 +469,24 @@ test('adds configurable returns and spaces to the output layout', () => {
     expect.objectContaining({ type: 'return', count: 2 }),
     expect.objectContaining({ type: 'space', count: 3 }),
   ]));
+});
+
+test('saves and applies returns and spaces before an individual layout component', () => {
+  render(<App />);
+  fireEvent.click(screen.getByRole('button', { name: 'Layout' }));
+  const layoutDialog = screen.getByRole('dialog', { name: /layout/i });
+  fireEvent.change(screen.getByLabelText('Returns before Caries / Defective'), { target: { value: '2' } });
+  fireEvent.change(screen.getByLabelText('Spaces before Caries / Defective'), { target: { value: '3' } });
+  fireEvent.click(screen.getByRole('button', { name: /save layout/i }));
+
+  const preview = screen.getByRole('textbox', { name: 'Output preview' });
+  expect(preview.value).toContain('\n\n   Caries / Defective: None.');
+  expect(JSON.parse(window.localStorage.getItem('dental-note-maker.note')).layout[0]).toMatchObject({
+    id: 'caries',
+    returnsBefore: 2,
+    spacesBefore: 3,
+  });
+  expect(layoutDialog).toBeDefined();
 });
 
 test('keeps the default layout as no spacing until formatting is added manually', () => {

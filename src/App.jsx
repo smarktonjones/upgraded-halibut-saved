@@ -2107,7 +2107,7 @@ function SavedNotes({ savedNotes, technicianName, onRestore, isOpen }) {
       </div>
       <div className="saved-notes-list">
         {savedNotes.slice(0, 20).map((savedNote) => (
-          <button type="button" className="saved-note" key={savedNote.id} onClick={() => onRestore(savedNote.note)}>
+          <button type="button" className="saved-note" key={savedNote.id} onClick={() => onRestore(savedNote.note)} aria-label={`Saved note: ${savedNote.technicianName || technicianName || 'Technician'} at ${new Date(savedNote.savedAt).toLocaleString()}`}>
             <span className="saved-note-label">{savedNote.technicianName || technicianName || 'Technician'} · Local note</span>
             <time dateTime={savedNote.savedAt}>{new Date(savedNote.savedAt).toLocaleString()}</time>
           </button>
@@ -2122,7 +2122,7 @@ function App() {
   const [techName, setTechName] = useState(loadTechName);
   const [authUser, setAuthUser] = useState(null);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
-  const [isSavedNotesOpen, setIsSavedNotesOpen] = useState(false);
+  const [isSavedNotesOpen, setIsSavedNotesOpen] = useState(true);
   const [note, setNote] = useState(loadNote);
   const [savedNotes, setSavedNotes] = useState(loadSavedNotes);
   const [cloudNotes, setCloudNotes] = useState([]);
@@ -2672,16 +2672,12 @@ function App() {
           <h1>Clinical note</h1>
         </div>
         <div className="header-actions">
-          {authUser && (
-            <>
-              <button type="button" className="secondary-button" onClick={() => setIsCloudLayoutsOpen(true)}>Cloud Layouts</button>
-              <button type="button" className="secondary-button" onClick={exportPreferences}>Export JSON</button>
-              <label className="secondary-button file-button">Import JSON<input type="file" accept="application/json" onChange={importPreferences} /></label>
-              <button type="button" className="secondary-button" onClick={() => setIsLayoutOpen(true)}>Layout</button>
-              <button type="button" className={`secondary-button ${isArrangeMode ? 'is-active' : ''}`} onClick={() => setIsArrangeMode((current) => !current)}>{isArrangeMode ? 'Lock layout' : 'Arrange modules'}</button>
-              <button type="button" className="primary-button" onClick={() => setIsTextModuleOpen(true)}>+ Add module</button>
-            </>
-          )}
+          <button type="button" className="secondary-button" onClick={() => setIsCloudLayoutsOpen(true)}>Cloud Layouts</button>
+          <button type="button" className="secondary-button" onClick={exportPreferences}>Export JSON</button>
+          <label className="secondary-button file-button">Import JSON<input type="file" accept="application/json" onChange={importPreferences} /></label>
+          <button type="button" className="secondary-button" onClick={() => setIsLayoutOpen(true)}>Layout</button>
+          <button type="button" className={`secondary-button ${isArrangeMode ? 'is-active' : ''}`} onClick={() => setIsArrangeMode((current) => !current)}>{isArrangeMode ? 'Lock layout' : 'Arrange modules'}</button>
+          <button type="button" className="primary-button" onClick={() => setIsTextModuleOpen(true)}>+ Add module</button>
           <button type="button" className="secondary-button" onClick={() => setIsSavedNotesOpen((current) => !current)}>{isSavedNotesOpen ? 'Hide records' : 'Past 20 records'}</button>
           <button type="button" className="auth-status" onClick={() => setIsAuthOpen(true)} aria-label={authUser ? `Account ${authUser.email}` : 'Log in or create account'}>
             <span className="auth-status-name">{techName}</span>
