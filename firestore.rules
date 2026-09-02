@@ -11,8 +11,27 @@ service cloud.firestore {
       allow update: if false;
       allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
     }
+
+    match /layoutPreferences/{preferenceId} {
+      allow read: if true;
+      allow create: if request.auth != null
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.title is string
+        && request.resource.data.title.size() > 0
+        && request.resource.data.title.size() <= 100
+        && request.resource.data.preferences is map;
+      allow update: if request.auth != null
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.title is string
+        && request.resource.data.title.size() > 0
+        && request.resource.data.title.size() <= 100
+        && request.resource.data.preferences is map;
+      allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }
   }
 }
+

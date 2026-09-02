@@ -1,0 +1,40 @@
+{
+  "entities": {
+    "ArchivedNote": {
+      "title": "Archived Note",
+      "description": "Historical clinical note record",
+      "type": "object",
+      "properties": {
+        "savedAt": { "type": "string" },
+        "userId": { "type": "string" },
+        "technicianName": { "type": "string" },
+        "note": { "type": "object" }
+      },
+      "required": ["savedAt", "userId", "technicianName", "note"]
+    },
+    "LayoutPreference": {
+      "title": "Layout Preference",
+      "description": "Customizable clinical layout and snippet preference stored in Firestore",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 100 },
+        "preferences": { "type": "object" },
+        "userId": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["title", "preferences", "userId"]
+    }
+  },
+  "firestore": {
+    "/archivedNotes/{noteId}": {
+      "schema": "ArchivedNote",
+      "description": "Saved and archived clinical notes for doctors"
+    },
+    "/layoutPreferences/{preferenceId}": {
+      "schema": "LayoutPreference",
+      "description": "Shared and customizable layout preferences available to technicians and doctors"
+    }
+  }
+}

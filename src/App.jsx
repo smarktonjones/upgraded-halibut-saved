@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import './App.css';
 import { autocorrectToothEntry, CLINICAL_CATEGORIES, createNote, createTextComponent, formatToothSurfaces, parseToothSurfaces, createToothRegistry, OAP_FIELDS, getBloodPressureStatus, DEFAULT_BLOOD_PRESSURE_ALERT_LEVELS, LOCAL_ANESTHETICS, DENTAL_ALLERGY_OPTIONS, ALERT_CONDITION_OPTIONS, PREGNANCY_TRIMESTERS } from './noteSchema';
-import { addDoc, getDocs, limit, query, where } from 'firebase/firestore';
-import { auth, archivedNotesCollection } from './firebase';
+import { addDoc, deleteDoc, doc, getDocs, limit, query, setDoc, where } from 'firebase/firestore';
+import { auth, archivedNotesCollection, firestore, layoutPreferencesCollection } from './firebase';
 import { createUserWithEmailAndPassword, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 
 // Default reusable phrases shown in the text editor until preferences are changed.
@@ -28,6 +28,7 @@ const snippetsStorageKey = 'dental-note-maker.snippet-preferences';
 const noteStorageKey = 'dental-note-maker.note';
 const savedNotesStorageKey = 'dental-note-maker.saved-notes';
 const techNameStorageKey = 'dental-note-maker.tech-name';
+const layoutPreferencesStorageKey = 'dental-note-maker.layout-preferences';
 
 function logFirebase(message, details) {
   console.info(`[DentalNoteMaker Firebase] ${message}`, details || '');
@@ -35,6 +36,16 @@ function logFirebase(message, details) {
 
 function logFirebaseError(message, error) {
   console.error(`[DentalNoteMaker Firebase] ${message}`, error);
+}
+
+function loadCachedLayoutPreferences() {
+  try {
+    const saved = window.localStorage.getItem(layoutPreferencesStorageKey);
+    const parsed = saved ? JSON.parse(saved) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 // Preferences and the database-shaped note are restored from the browser cache.
@@ -70,17 +81,69 @@ function loadTechName() {
   return window.localStorage.getItem(techNameStorageKey) || '';
 }
 
-function WelcomeScreen({ initialTechName, onContinue, onDoctorLogin }) {
+function WelcomeScreen({
+  initialTechName,
+  onContinue,
+  onDoctorLogin,
+  layoutPreferences = [],
+  layoutPreferencesStatus = 'idle',
+  onRefreshPreferences,
+}) {
   const [techName, setTechName] = useState(initialTechName);
+  const [selectedPreferenceId, setSelectedPreferenceId] = useState('');
+
   return (
     <main className="welcome-screen">
       <section className="welcome-panel" aria-labelledby="welcome-title">
         <p className="eyebrow">DentalNoteMaker</p>
         <h1 id="welcome-title">Start a clinical note</h1>
         <p className="welcome-copy">Enter your Tech Name to begin, or sign in as a doctor to access cloud records.</p>
-        <form onSubmit={(event) => { event.preventDefault(); if (techName.trim()) onContinue(techName.trim()); }}>
+        <form onSubmit={(event) => {
+          event.preventDefault();
+          if (techName.trim()) {
+            const chosenPref = layoutPreferences.find((p) => p.id === selectedPreferenceId) || null;
+            onContinue(techName.trim(), chosenPref);
+          }
+        }}>
           <label className="field-label" htmlFor="welcome-tech-name">Tech Name</label>
           <input id="welcome-tech-name" value={techName} onChange={(event) => setTechName(event.target.value)} autoFocus placeholder="Enter your name" />
+
+          <div className="preference-select-field">
+            <div className="preference-select-header">
+              <label className="field-label" htmlFor="welcome-layout-preference" style={{ margin: 0 }}>
+                Layout Preference (JSON)
+              </label>
+              {onRefreshPreferences && (
+                <button
+                  type="button"
+                  className="edit-link"
+                  style={{ fontSize: '0.75rem' }}
+                  onClick={onRefreshPreferences}
+                  title="Refresh layout preferences from cloud"
+                >
+                  {layoutPreferencesStatus === 'loading' ? 'Refreshing...' : '↻ Refresh list'}
+                </button>
+              )}
+            </div>
+            <select
+              id="welcome-layout-preference"
+              value={selectedPreferenceId}
+              onChange={(event) => setSelectedPreferenceId(event.target.value)}
+            >
+              <option value="">Default / Current Local Layout</option>
+              {layoutPreferences.map((pref) => (
+                <option key={pref.id} value={pref.id}>
+                  {pref.title} {pref.createdBy ? `(by ${pref.createdBy})` : ''}
+                </option>
+              ))}
+            </select>
+            <p className="field-help" style={{ marginTop: '6px', fontSize: '0.8rem' }}>
+              {selectedPreferenceId
+                ? 'Selected preference will set module arrangement and snippet presets.'
+                : 'Use current local workspace layout or select a preset saved in Firestore.'}
+            </p>
+          </div>
+
           <button className="primary-button welcome-submit" type="submit">Continue</button>
         </form>
         <button type="button" className="secondary-button doctor-login-button" onClick={onDoctorLogin}>Doctor login</button>
@@ -89,7 +152,16 @@ function WelcomeScreen({ initialTechName, onContinue, onDoctorLogin }) {
   );
 }
 
-function AuthModal({ user, onClose, onAuthenticated, onSignedOut, cloudNotes, cloudStatus, onRestoreCloudNote }) {
+function AuthModal({
+  user,
+  onClose,
+  onAuthenticated,
+  onSignedOut,
+  cloudNotes,
+  cloudStatus,
+  onRestoreCloudNote,
+  onOpenCloudLayouts,
+}) {
   const [isCreateMode, setIsCreateMode] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -123,7 +195,15 @@ function AuthModal({ user, onClose, onAuthenticated, onSignedOut, cloudNotes, cl
           <button className="icon-button" type="button" onClick={onClose} aria-label="Close account dialog">×</button>
         </header>
         {user ? (
-          <div className="modal-body auth-account-body"><p>Signed in as <strong>{user.email}</strong>.</p><button type="button" className="secondary-button" onClick={() => setIsCloudNotesOpen(true)}>View cloud records</button><button type="button" className="secondary-button" onClick={onSignedOut}>Sign out</button>{isCloudNotesOpen && <CloudNotesModal cloudNotes={cloudNotes} cloudStatus={cloudStatus} onRestore={onRestoreCloudNote} onClose={() => setIsCloudNotesOpen(false)} />}</div>
+          <div className="modal-body auth-account-body">
+            <p>Signed in as <strong>{user.email}</strong>.</p>
+            <button type="button" className="secondary-button" onClick={() => setIsCloudNotesOpen(true)}>View cloud records</button>
+            {onOpenCloudLayouts && (
+              <button type="button" className="secondary-button" onClick={onOpenCloudLayouts}>Manage Cloud Layouts</button>
+            )}
+            <button type="button" className="secondary-button" onClick={onSignedOut}>Sign out</button>
+            {isCloudNotesOpen && <CloudNotesModal cloudNotes={cloudNotes} cloudStatus={cloudStatus} onRestore={onRestoreCloudNote} onClose={() => setIsCloudNotesOpen(false)} />}
+          </div>
         ) : (
           <form onSubmit={submit}>
             <div className="modal-body auth-form">
@@ -156,8 +236,348 @@ function CloudNotesModal({ cloudNotes, cloudStatus, onRestore, onClose }) {
   );
 }
 
+function CloudLayoutsModal({
+  isOpen,
+  onClose,
+  layoutPreferences,
+  layoutPreferencesStatus,
+  onRefreshPreferences,
+  onSavePreference,
+  onDeletePreference,
+  onApplyPreference,
+  currentNote,
+  currentSnippets,
+  authUser,
+}) {
+  const [title, setTitle] = useState('');
+  const [source, setSource] = useState('current');
+  const [fileContent, setFileContent] = useState(null);
+  const [fileName, setFileName] = useState('');
+  const [rawJson, setRawJson] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+
+  const existingPref = layoutPreferences.find(
+    (p) => p.title?.trim().toLowerCase() === title.trim().toLowerCase()
+  );
+
+  function handleFileChange(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(reader.result);
+        setFileContent(parsed);
+        setErrorMessage('');
+      } catch {
+        setErrorMessage('Invalid JSON file format.');
+        setFileContent(null);
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  async function handleSave(event) {
+    event.preventDefault();
+    setErrorMessage('');
+    setSuccessMessage('');
+    setIsSubmitting(true);
+    try {
+      await onSavePreference({
+        title,
+        source,
+        jsonFileContent: fileContent,
+        rawJsonText: rawJson,
+      });
+      setSuccessMessage(existingPref ? `Updated "${title}" in Firestore!` : `Saved "${title}" as new preference!`);
+      setTitle('');
+      setFileContent(null);
+      setFileName('');
+      setRawJson('');
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (error) {
+      setErrorMessage(error.message || 'Failed to save layout preference.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  function downloadJson(pref) {
+    const payload = pref.preferences || pref;
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const downloadUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = `${(pref.title || 'layout-preference').toLowerCase().replace(/[^a-z0-9]+/g, '-')}.json`;
+    link.click();
+    URL.revokeObjectURL(downloadUrl);
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <section className="editor-modal cloud-layout-modal" role="dialog" aria-modal="true" aria-labelledby="cloud-layouts-title">
+        <header className="modal-header">
+          <div>
+            <p className="eyebrow">Firestore Layout Preferences</p>
+            <h2 id="cloud-layouts-title">Cloud Layout Preferences</h2>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="Close cloud layouts dialog">×</button>
+        </header>
+
+        <div className="modal-body">
+          <form className="cloud-layout-form" onSubmit={handleSave}>
+            <div>
+              <p className="field-label" style={{ fontWeight: 800, fontSize: '0.95rem' }}>Upload or Overwrite Layout Preference</p>
+              <p className="field-help">Save custom UI arrangement, modules, and snippet sets to Firestore for technicians to select on login.</p>
+            </div>
+
+            <div>
+              <label className="field-label" htmlFor="pref-title-input">Preference Title Name</label>
+              <input
+                id="pref-title-input"
+                type="text"
+                placeholder="e.g. Hygiene Recall, New Patient Comprehensive, Operative Restorative"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                maxLength={100}
+                required
+              />
+              {layoutPreferences.length > 0 && (
+                <div style={{ marginTop: '8px' }}>
+                  <span className="field-help" style={{ fontSize: '0.78rem', marginRight: '6px' }}>Or select existing title to overwrite:</span>
+                  <div className="title-chip-group">
+                    {layoutPreferences.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        className="title-chip"
+                        onClick={() => setTitle(p.title)}
+                        title={`Select "${p.title}"`}
+                      >
+                        {p.title}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className="field-label">Layout Data Source</label>
+              <div className="source-tabs">
+                <button
+                  type="button"
+                  className={`source-tab ${source === 'current' ? 'is-active' : ''}`}
+                  onClick={() => setSource('current')}
+                >
+                  Current Workspace
+                </button>
+                <button
+                  type="button"
+                  className={`source-tab ${source === 'file' ? 'is-active' : ''}`}
+                  onClick={() => setSource('file')}
+                >
+                  Upload JSON File
+                </button>
+                <button
+                  type="button"
+                  className={`source-tab ${source === 'paste' ? 'is-active' : ''}`}
+                  onClick={() => setSource('paste')}
+                >
+                  Paste JSON
+                </button>
+              </div>
+
+              {source === 'current' && (
+                <p className="field-help">
+                  Will save current workspace configuration: <strong>{currentNote.sections?.length || 0} sections</strong> ({currentNote.sections?.flatMap((s) => s.elements).length || 0} modules) and <strong>{currentSnippets?.length || 0} snippets</strong>.
+                </p>
+              )}
+
+              {source === 'file' && (
+                <div>
+                  <label className="secondary-button file-button" style={{ display: 'inline-block' }}>
+                    {fileName ? `File: ${fileName}` : 'Choose JSON File'}
+                    <input type="file" accept="application/json" onChange={handleFileChange} />
+                  </label>
+                  {fileName && <span style={{ marginLeft: '10px', fontSize: '0.85rem', color: 'var(--teal-dark)', fontWeight: 700 }}>✓ Loaded</span>}
+                </div>
+              )}
+
+              {source === 'paste' && (
+                <div>
+                  <textarea
+                    placeholder='Paste JSON preference here... e.g. { "note": { "sections": [...], "layout": [...] }, "snippets": [...] }'
+                    value={rawJson}
+                    onChange={(e) => setRawJson(e.target.value)}
+                    style={{ minHeight: '120px', fontFamily: 'monospace', fontSize: '0.82rem' }}
+                  />
+                </div>
+              )}
+            </div>
+
+            {existingPref && (
+              <div className="overwrite-alert">
+                <span>⚠️</span>
+                <div>
+                  <strong>Overwrite Alert:</strong> A preference with title <em>"{existingPref.title}"</em> already exists in Firestore. Saving will <strong>overwrite</strong> its configuration.
+                </div>
+              </div>
+            )}
+
+            {errorMessage && <p className="auth-error" role="alert">{errorMessage}</p>}
+            {successMessage && <p style={{ color: '#176b43', fontWeight: 700, margin: '4px 0' }} role="status">{successMessage}</p>}
+
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+              <button
+                type="submit"
+                className="primary-button"
+                disabled={isSubmitting || !title.trim()}
+              >
+                {isSubmitting ? 'Saving to Firestore...' : existingPref ? `Overwrite "${existingPref.title}"` : 'Save as New Preference'}
+              </button>
+              {onRefreshPreferences && (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={onRefreshPreferences}
+                  disabled={layoutPreferencesStatus === 'loading'}
+                >
+                  {layoutPreferencesStatus === 'loading' ? 'Refreshing...' : '↻ Refresh list'}
+                </button>
+              )}
+            </div>
+          </form>
+
+          <div style={{ marginTop: '24px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+              <h3 style={{ margin: 0, fontSize: '1.15rem', color: 'var(--ink)' }}>
+                Saved Firestore Preferences ({layoutPreferences.length})
+              </h3>
+            </div>
+
+            {layoutPreferencesStatus === 'loading' && layoutPreferences.length === 0 && (
+              <p className="cloud-status">Loading preferences from Firestore...</p>
+            )}
+
+            {layoutPreferences.length === 0 && layoutPreferencesStatus !== 'loading' && (
+              <p className="empty-history">No preferences saved in Firestore yet. Upload your first layout preference above.</p>
+            )}
+
+            <div className="cloud-layouts-list">
+              {layoutPreferences.map((pref) => {
+                const prefData = pref.preferences || {};
+                const noteData = prefData.note || {};
+                const moduleCount = noteData.sections?.flatMap((s) => s.elements)?.length || 0;
+                const snippetCount = prefData.snippets?.length || 0;
+                const isConfirmingDelete = deleteConfirmId === pref.id;
+
+                return (
+                  <article key={pref.id} className="cloud-layout-card">
+                    <div className="cloud-layout-card-header">
+                      <div>
+                        <h4 className="cloud-layout-card-title">{pref.title}</h4>
+                        <div className="cloud-layout-meta">
+                          <span className="cloud-layout-badge">{moduleCount} modules</span>
+                          <span className="cloud-layout-badge">{snippetCount} snippets</span>
+                          {pref.createdBy && <span>By {pref.createdBy}</span>}
+                          {pref.updatedAt && (
+                            <time dateTime={pref.updatedAt}>
+                              Updated {new Date(pref.updatedAt).toLocaleDateString()}
+                            </time>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="cloud-layout-actions">
+                      <button
+                        type="button"
+                        className="primary-button"
+                        onClick={() => onApplyPreference(pref)}
+                        title="Load this layout into active workspace"
+                      >
+                        Apply to workspace
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => downloadJson(pref)}
+                        title="Download JSON file"
+                      >
+                        Download JSON
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => {
+                          setTitle(pref.title);
+                          setSource('current');
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }}
+                        title="Quick overwrite with current workspace"
+                      >
+                        Overwrite with current
+                      </button>
+
+                      {isConfirmingDelete ? (
+                        <div style={{ display: 'inline-flex', gap: '4px', alignItems: 'center' }}>
+                          <span style={{ fontSize: '0.78rem', color: '#a21e1e', fontWeight: 700 }}>Confirm delete?</span>
+                          <button
+                            type="button"
+                            className="danger-button"
+                            onClick={async () => {
+                              try {
+                                await onDeletePreference(pref.id);
+                                setDeleteConfirmId(null);
+                              } catch (err) {
+                                setErrorMessage(err.message || 'Could not delete preference.');
+                              }
+                            }}
+                          >
+                            Yes, delete
+                          </button>
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={() => setDeleteConfirmId(null)}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          className="danger-button"
+                          onClick={() => setDeleteConfirmId(pref.id)}
+                          title="Delete this preference from Firestore"
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        <footer className="modal-footer">
+          <button type="button" className="secondary-button" onClick={onClose}>Close</button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
 // Text editing, snippet insertion, and snippet preference management.
 function TextEditorModal({ initialText, snippets, onCancel, onSave, onSaveSnippets }) {
+
   const [draftText, setDraftText] = useState(initialText);
   const [selectedSnippetId, setSelectedSnippetId] = useState(snippets[0]?.id ?? '');
   const [isManagingSnippets, setIsManagingSnippets] = useState(false);
@@ -1707,6 +2127,9 @@ function App() {
   const [savedNotes, setSavedNotes] = useState(loadSavedNotes);
   const [cloudNotes, setCloudNotes] = useState([]);
   const [cloudStatus, setCloudStatus] = useState('idle');
+  const [layoutPreferences, setLayoutPreferences] = useState(loadCachedLayoutPreferences);
+  const [layoutPreferencesStatus, setLayoutPreferencesStatus] = useState('idle');
+  const [isCloudLayoutsOpen, setIsCloudLayoutsOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState(null);
   const [editingPropertiesComponentId, setEditingPropertiesComponentId] = useState(null);
   const [snippets, setSnippets] = useState(loadSnippets);
@@ -1723,6 +2146,141 @@ function App() {
   const findingStorageKey = findingType === 'incipientCaries' ? 'incipientCaries' : findingType === 'completed' ? 'completed' : 'teeth';
   const teeth = note[findingStorageKey];
 
+  async function fetchLayoutPreferences() {
+    setLayoutPreferencesStatus('loading');
+    try {
+      const snapshot = await getDocs(layoutPreferencesCollection);
+      const prefs = snapshot.docs.map((document) => ({ id: document.id, ...document.data() }))
+        .sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+      setLayoutPreferences(prefs);
+      try {
+        window.localStorage.setItem(layoutPreferencesStorageKey, JSON.stringify(prefs));
+      } catch {
+        // Ignore local storage quota errors
+      }
+      setLayoutPreferencesStatus('loaded');
+      logFirebase('Loaded layout preferences from Firestore', { count: prefs.length });
+    } catch (error) {
+      setLayoutPreferencesStatus('error');
+      // If permission is not yet granted in Firestore rules or user is offline, use cached preferences
+      const cached = loadCachedLayoutPreferences();
+      if (cached.length > 0) {
+        setLayoutPreferences(cached);
+      }
+      logFirebase('Using local layout preferences (Firestore read pending rules update or offline)', error?.message);
+    }
+  }
+
+  useEffect(() => {
+    fetchLayoutPreferences();
+  }, []);
+
+  function applyPreferences(prefData, title = '') {
+    if (!prefData) return;
+    const preferences = prefData.preferences || prefData;
+    if (Array.isArray(preferences.snippets)) {
+      setSnippets(preferences.snippets);
+    }
+    if (preferences.note) {
+      setNote((currentNote) => createNote({
+        ...currentNote,
+        ...preferences.note,
+        teeth: createToothRegistry(),
+        incipientCaries: createToothRegistry(),
+        completed: createToothRegistry(),
+      }));
+    }
+    setToastMessage(title ? `Applied layout: ${title}` : 'Applied layout preference');
+    setTimeout(() => setToastMessage(null), 2000);
+  }
+
+  async function saveLayoutPreference({ title, source, jsonFileContent, rawJsonText }) {
+    if (!authUser) {
+      throw new Error('You must be signed in as a doctor to save layout preferences to Firestore.');
+    }
+    const cleanTitle = title?.trim();
+    if (!cleanTitle) {
+      throw new Error('Please provide a title name for the preference.');
+    }
+    if (cleanTitle.length > 100) {
+      throw new Error('Title must be 100 characters or fewer.');
+    }
+
+    let prefPayload = null;
+    if (source === 'current') {
+      prefPayload = {
+        schemaVersion: 1,
+        snippets,
+        note: {
+          layout: note.layout,
+          interfaceLayout: note.interfaceLayout,
+          sections: note.sections,
+        },
+      };
+    } else if (source === 'file') {
+      if (!jsonFileContent) throw new Error('Please select a valid JSON file.');
+      prefPayload = typeof jsonFileContent === 'string' ? JSON.parse(jsonFileContent) : jsonFileContent;
+    } else if (source === 'paste') {
+      if (!rawJsonText?.trim()) throw new Error('Please enter or paste JSON preference content.');
+      prefPayload = JSON.parse(rawJsonText);
+    }
+
+    if (!prefPayload || typeof prefPayload !== 'object') {
+      throw new Error('Invalid preferences payload structure.');
+    }
+
+    const doctorName = authUser.displayName || authUser.email?.split('@')[0] || 'Doctor';
+    const now = new Date().toISOString();
+    const existing = layoutPreferences.find((p) => p.title.trim().toLowerCase() === cleanTitle.toLowerCase());
+
+    const docData = {
+      title: cleanTitle,
+      preferences: prefPayload,
+      userId: authUser.uid,
+      createdBy: authUser.email || doctorName,
+      updatedAt: now,
+      createdAt: existing?.createdAt || now,
+    };
+
+    if (existing) {
+      const prefDocRef = doc(firestore, 'layoutPreferences', existing.id);
+      await setDoc(prefDocRef, docData);
+      logFirebase('Overwrote layout preference in Firestore', { id: existing.id, title: cleanTitle });
+      const updated = layoutPreferences.map((p) => (p.id === existing.id ? { ...docData, id: existing.id } : p));
+      setLayoutPreferences(updated);
+      window.localStorage.setItem(layoutPreferencesStorageKey, JSON.stringify(updated));
+    } else {
+      const newDoc = await addDoc(layoutPreferencesCollection, docData);
+      logFirebase('Created new layout preference in Firestore', { id: newDoc.id, title: cleanTitle });
+      const updated = [...layoutPreferences, { ...docData, id: newDoc.id }].sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+      setLayoutPreferences(updated);
+      window.localStorage.setItem(layoutPreferencesStorageKey, JSON.stringify(updated));
+    }
+
+    try {
+      await fetchLayoutPreferences();
+    } catch {
+      // Ignored if handled locally
+    }
+  }
+
+  async function deleteLayoutPreference(prefId) {
+    if (!authUser) {
+      throw new Error('You must be signed in as a doctor to delete layout preferences.');
+    }
+    const prefDocRef = doc(firestore, 'layoutPreferences', prefId);
+    await deleteDoc(prefDocRef);
+    logFirebase('Deleted layout preference from Firestore', { id: prefId });
+    const updated = layoutPreferences.filter((p) => p.id !== prefId);
+    setLayoutPreferences(updated);
+    window.localStorage.setItem(layoutPreferencesStorageKey, JSON.stringify(updated));
+    try {
+      await fetchLayoutPreferences();
+    } catch {
+      // Ignored if handled locally
+    }
+  }
+
   useEffect(() => onAuthStateChanged(auth, (user) => {
     setAuthUser(user);
     if (user && !techName) {
@@ -1733,9 +2291,12 @@ function App() {
     logFirebase(user ? 'Authenticated user detected' : 'Signed-out mode: Firestore archive disabled', user?.email);
   }), [techName]);
 
-  function continueToWorkspace(name) {
+  function continueToWorkspace(name, selectedPref = null) {
     window.localStorage.setItem(techNameStorageKey, name);
     setTechName(name);
+    if (selectedPref) {
+      applyPreferences(selectedPref, selectedPref.title);
+    }
   }
 
   function handleAuthenticated(user) {
@@ -2061,7 +2622,47 @@ function App() {
     return () => document.removeEventListener('keydown', closeOnEscape);
   }, []);
 
-  if (!techName) return <><WelcomeScreen initialTechName={techName} onContinue={continueToWorkspace} onDoctorLogin={() => setIsAuthOpen(true)} />{isAuthOpen && <AuthModal user={authUser} cloudNotes={cloudNotes} cloudStatus={cloudStatus} onRestoreCloudNote={restoreSavedNote} onClose={() => setIsAuthOpen(false)} onAuthenticated={handleAuthenticated} onSignedOut={signOutDoctor} />}</>;
+  if (!techName) {
+    return (
+      <>
+        <WelcomeScreen
+          initialTechName={techName}
+          onContinue={continueToWorkspace}
+          onDoctorLogin={() => setIsAuthOpen(true)}
+          layoutPreferences={layoutPreferences}
+          layoutPreferencesStatus={layoutPreferencesStatus}
+          onRefreshPreferences={fetchLayoutPreferences}
+        />
+        {isAuthOpen && (
+          <AuthModal
+            user={authUser}
+            cloudNotes={cloudNotes}
+            cloudStatus={cloudStatus}
+            onRestoreCloudNote={restoreSavedNote}
+            onOpenCloudLayouts={() => setIsCloudLayoutsOpen(true)}
+            onClose={() => setIsAuthOpen(false)}
+            onAuthenticated={handleAuthenticated}
+            onSignedOut={signOutDoctor}
+          />
+        )}
+        {isCloudLayoutsOpen && (
+          <CloudLayoutsModal
+            isOpen={isCloudLayoutsOpen}
+            onClose={() => setIsCloudLayoutsOpen(false)}
+            layoutPreferences={layoutPreferences}
+            layoutPreferencesStatus={layoutPreferencesStatus}
+            onRefreshPreferences={fetchLayoutPreferences}
+            onSavePreference={saveLayoutPreference}
+            onDeletePreference={deleteLayoutPreference}
+            onApplyPreference={(pref) => applyPreferences(pref, pref.title)}
+            currentNote={note}
+            currentSnippets={snippets}
+            authUser={authUser}
+          />
+        )}
+      </>
+    );
+  }
 
   return (
     <main className="app-shell" onContextMenuCapture={(event) => event.preventDefault()}>
@@ -2071,11 +2672,16 @@ function App() {
           <h1>Clinical note</h1>
         </div>
         <div className="header-actions">
-          {authUser && <><button type="button" className="secondary-button" onClick={exportPreferences}>Export JSON</button>
-          <label className="secondary-button file-button">Import JSON<input type="file" accept="application/json" onChange={importPreferences} /></label>
-          <button type="button" className="secondary-button" onClick={() => setIsLayoutOpen(true)}>Layout</button>
-          <button type="button" className={`secondary-button ${isArrangeMode ? 'is-active' : ''}`} onClick={() => setIsArrangeMode((current) => !current)}>{isArrangeMode ? 'Lock layout' : 'Arrange modules'}</button>
-          <button type="button" className="primary-button" onClick={() => setIsTextModuleOpen(true)}>+ Add module</button></>}
+          {authUser && (
+            <>
+              <button type="button" className="secondary-button" onClick={() => setIsCloudLayoutsOpen(true)}>Cloud Layouts</button>
+              <button type="button" className="secondary-button" onClick={exportPreferences}>Export JSON</button>
+              <label className="secondary-button file-button">Import JSON<input type="file" accept="application/json" onChange={importPreferences} /></label>
+              <button type="button" className="secondary-button" onClick={() => setIsLayoutOpen(true)}>Layout</button>
+              <button type="button" className={`secondary-button ${isArrangeMode ? 'is-active' : ''}`} onClick={() => setIsArrangeMode((current) => !current)}>{isArrangeMode ? 'Lock layout' : 'Arrange modules'}</button>
+              <button type="button" className="primary-button" onClick={() => setIsTextModuleOpen(true)}>+ Add module</button>
+            </>
+          )}
           <button type="button" className="secondary-button" onClick={() => setIsSavedNotesOpen((current) => !current)}>{isSavedNotesOpen ? 'Hide records' : 'Past 20 records'}</button>
           <button type="button" className="auth-status" onClick={() => setIsAuthOpen(true)} aria-label={authUser ? `Account ${authUser.email}` : 'Log in or create account'}>
             <span className="auth-status-name">{techName}</span>
@@ -2146,7 +2752,34 @@ function App() {
         />
       )}
 
-      {isAuthOpen && <AuthModal user={authUser} cloudNotes={cloudNotes} cloudStatus={cloudStatus} onRestoreCloudNote={restoreSavedNote} onClose={() => setIsAuthOpen(false)} onAuthenticated={handleAuthenticated} onSignedOut={signOutDoctor} />}
+      {isAuthOpen && (
+        <AuthModal
+          user={authUser}
+          cloudNotes={cloudNotes}
+          cloudStatus={cloudStatus}
+          onRestoreCloudNote={restoreSavedNote}
+          onOpenCloudLayouts={() => setIsCloudLayoutsOpen(true)}
+          onClose={() => setIsAuthOpen(false)}
+          onAuthenticated={handleAuthenticated}
+          onSignedOut={signOutDoctor}
+        />
+      )}
+
+      {isCloudLayoutsOpen && (
+        <CloudLayoutsModal
+          isOpen={isCloudLayoutsOpen}
+          onClose={() => setIsCloudLayoutsOpen(false)}
+          layoutPreferences={layoutPreferences}
+          layoutPreferencesStatus={layoutPreferencesStatus}
+          onRefreshPreferences={fetchLayoutPreferences}
+          onSavePreference={saveLayoutPreference}
+          onDeletePreference={deleteLayoutPreference}
+          onApplyPreference={(pref) => applyPreferences(pref, pref.title)}
+          currentNote={note}
+          currentSnippets={snippets}
+          authUser={authUser}
+        />
+      )}
 
       {editingComponentId && (() => {
         const component = textComponents.find((item) => item.id === editingComponentId);
