@@ -1,6 +1,6 @@
 {
   "name": "Dental Note Maker",
-  "description": "Interactive dental charting and clinical note generator with tooth mapping, customizable snippets, modular sections, and formatted output previews.",
+  "description": "Collaborative dental charting and clinical note generator with MHS Genesis formatting, customizable snippets, modular sections, and live output previews.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
