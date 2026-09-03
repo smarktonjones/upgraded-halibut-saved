@@ -77,6 +77,20 @@ function loadSavedNotes() {
   }
 }
 
+const LANDING_FEATURES = [
+  'Real-time Doctor-Tech collaboration',
+  'MHS Genesis-ready formatting for DHA clinics',
+  'Standardized military dental classifications (Class 1–4)',
+  'Interactive tooth chart with multi-surface caries mapping',
+  'Seamlessly import past notes & local history',
+  'Cloud-synced note history & Firestore preferences',
+  'Detailed Endo-Testing & PSR tables',
+  'Built-in dental term & tooth surface autocorrect',
+  'Quick-Copy with Shift + Enter',
+  'Double-click to replace text snippets',
+  'Fully customizable note templates & layouts',
+];
+
 function loadTechName() {
   return window.localStorage.getItem(techNameStorageKey) || '';
 }
@@ -91,63 +105,151 @@ function WelcomeScreen({
 }) {
   const [techName, setTechName] = useState(initialTechName);
   const [selectedPreferenceId, setSelectedPreferenceId] = useState('');
+  const [featureIndex, setFeatureIndex] = useState(0);
+  const [isFading, setIsFading] = useState(false);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setIsFading(true);
+      setTimeout(() => {
+        setFeatureIndex((prev) => (prev + 1) % LANDING_FEATURES.length);
+        setIsFading(false);
+      }, 350);
+    }, 3200);
+    return () => clearInterval(timer);
+  }, []);
 
   return (
-    <main className="welcome-screen">
-      <section className="welcome-panel" aria-labelledby="welcome-title">
-        <p className="eyebrow">DentalNoteMaker</p>
-        <h1 id="welcome-title">Start a clinical note</h1>
-        <p className="welcome-copy">Enter your Tech Name to begin, or sign in as a doctor to access cloud records.</p>
-        <form onSubmit={(event) => {
-          event.preventDefault();
-          if (techName.trim()) {
-            const chosenPref = layoutPreferences.find((p) => p.id === selectedPreferenceId) || null;
-            onContinue(techName.trim(), chosenPref);
-          }
-        }}>
-          <label className="field-label" htmlFor="welcome-tech-name">Tech Name</label>
-          <input id="welcome-tech-name" value={techName} onChange={(event) => setTechName(event.target.value)} autoFocus placeholder="Enter your name" />
+    <main className="welcome-screen" id="view-technician-start">
+      <div className="landing-container">
+        <header className="landing-hero-header">
+          <p className="eyebrow landing-kicker">CLINICAL NOTE SUITE · MHS GENESIS READY</p>
+          <h1 className="landing-title">Dental Note Maker</h1>
+          <p className="landing-version">v5 · Cloud Edition</p>
+          <p className="landing-app-description">
+            A standardized, collaborative clinical note generation and charting tool designed for clinics and military healthcare facilities. Streamlines tooth charting, restorative treatments, SOAP note composition, and seamless real-time handoffs between providers and technicians.
+          </p>
+        </header>
 
-          <div className="preference-select-field">
-            <div className="preference-select-header">
-              <label className="field-label" htmlFor="welcome-layout-preference" style={{ margin: 0 }}>
-                Layout Preference (JSON)
-              </label>
-              {onRefreshPreferences && (
-                <button
-                  type="button"
-                  className="edit-link"
-                  style={{ fontSize: '0.75rem' }}
-                  onClick={onRefreshPreferences}
-                  title="Refresh layout preferences from cloud"
-                >
-                  {layoutPreferencesStatus === 'loading' ? 'Refreshing...' : '↻ Refresh list'}
-                </button>
-              )}
-            </div>
-            <select
-              id="welcome-layout-preference"
-              value={selectedPreferenceId}
-              onChange={(event) => setSelectedPreferenceId(event.target.value)}
-            >
-              <option value="">Default / Current Local Layout</option>
-              {layoutPreferences.map((pref) => (
-                <option key={pref.id} value={pref.id}>
-                  {pref.title} {pref.createdBy ? `(by ${pref.createdBy})` : ''}
-                </option>
-              ))}
-            </select>
-            <p className="field-help" style={{ marginTop: '6px', fontSize: '0.8rem' }}>
-              {selectedPreferenceId
-                ? 'Selected preference will set module arrangement and snippet presets.'
-                : 'Use current local workspace layout or select a preset saved in Firestore.'}
+        <section className="welcome-panel login-box" aria-labelledby="welcome-title">
+          <div className="login-box-header">
+            <h2 id="welcome-title">Start a clinical note</h2>
+            <p className="welcome-copy">
+              Select your clinic template and enter your Tech Name to begin, or sign in as a doctor for cloud-synced records.
             </p>
           </div>
 
-          <button className="primary-button welcome-submit" type="submit">Continue</button>
-        </form>
-        <button type="button" className="secondary-button doctor-login-button" onClick={onDoctorLogin}>Doctor login</button>
-      </section>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (techName.trim()) {
+                const chosenPref = layoutPreferences.find((p) => p.id === selectedPreferenceId) || null;
+                onContinue(techName.trim(), chosenPref);
+              }
+            }}
+          >
+            <div className="preference-select-field">
+              <div className="preference-select-header">
+                <label className="field-label" htmlFor="welcome-layout-preference" style={{ margin: 0 }}>
+                  1. Clinic / Layout Template
+                </label>
+                {onRefreshPreferences && (
+                  <button
+                    type="button"
+                    className="edit-link"
+                    style={{ fontSize: '0.75rem' }}
+                    onClick={onRefreshPreferences}
+                    title="Refresh layout preferences from cloud"
+                  >
+                    {layoutPreferencesStatus === 'loading' ? 'Refreshing...' : '↻ Refresh templates'}
+                  </button>
+                )}
+              </div>
+              <select
+                id="welcome-layout-preference"
+                value={selectedPreferenceId}
+                onChange={(event) => setSelectedPreferenceId(event.target.value)}
+              >
+                <option value="">Default / Standard DHA Clinic Template</option>
+                {layoutPreferences.map((pref) => (
+                  <option key={pref.id} value={pref.id}>
+                    {pref.title} {pref.createdBy ? `(by ${pref.createdBy})` : ''}
+                  </option>
+                ))}
+              </select>
+              <p className="field-help" style={{ marginTop: '6px', fontSize: '0.8rem' }}>
+                {selectedPreferenceId
+                  ? 'Selected preference sets module arrangement and snippet presets.'
+                  : 'Use current local workspace layout or select a preset saved in Firestore.'}
+              </p>
+            </div>
+
+            <div className="form-field-group">
+              <label className="field-label" htmlFor="welcome-tech-name">
+                Tech Name
+              </label>
+              <input
+                id="welcome-tech-name"
+                value={techName}
+                onChange={(event) => setTechName(event.target.value)}
+                autoFocus
+                placeholder="Enter your name..."
+              />
+            </div>
+
+            <button className="primary-button welcome-submit" id="start-day-button" type="submit">
+              Continue
+            </button>
+          </form>
+
+          <div className="login-divider">
+            <span>- or -</span>
+          </div>
+
+          <button
+            type="button"
+            className="secondary-button doctor-login-button"
+            id="show-doctor-login-btn"
+            onClick={onDoctorLogin}
+          >
+            Doctor Login / Firebase Account
+          </button>
+        </section>
+
+        {/* 3. Feature Showcase Section with Rotating Feature Description */}
+        <section className="feature-showcase" aria-label="A Collaborative Note-Making Tool">
+          <h2>A Collaborative Note-Making Tool</h2>
+          <p className="feature-showcase-desc">
+            Built for speed and teamwork, enabling seamless real-time updates between doctors and technicians for DHA clinic operations.
+          </p>
+          <div className="feature-rotator" aria-live="polite">
+            <span
+              id="feature-text"
+              className={`feature-rotator-text ${isFading ? 'fading' : 'active'}`}
+            >
+              {LANDING_FEATURES[featureIndex]}
+            </span>
+          </div>
+          <div className="feature-pill-track" role="region" aria-label="Key features preview">
+            {LANDING_FEATURES.slice(0, 6).map((feat, i) => (
+              <span key={i} className="feature-chip">
+                {feat}
+              </span>
+            ))}
+          </div>
+        </section>
+
+        {/* 4. Non-DoD / Non-Navy Disclaimer Footer */}
+        <footer className="landing-footer">
+          <p className="disclaimer-text">
+            This is a non-DoD, non-Navy affiliated website. The appearance of hyperlinks does not constitute endorsement. This website is provided as-is without any warranty of any kind. Users shall not enter, store, or transmit any Personally Identifiable Information (PII) or Protected Health Information (PHI).
+          </p>
+          <p className="landing-footer-contact">
+            For questions or support, contact the developer:{' '}
+            <a href="mailto:mark.g.horning.civ@health.mil">mark.g.horning.civ@health.mil</a>
+          </p>
+        </footer>
+      </div>
     </main>
   );
 }
@@ -2679,7 +2781,7 @@ function App() {
           <button type="button" className={`secondary-button ${isArrangeMode ? 'is-active' : ''}`} onClick={() => setIsArrangeMode((current) => !current)}>{isArrangeMode ? 'Lock layout' : 'Arrange modules'}</button>
           <button type="button" className="primary-button" onClick={() => setIsTextModuleOpen(true)}>+ Add module</button>
           <button type="button" className="secondary-button" onClick={() => setIsSavedNotesOpen((current) => !current)}>{isSavedNotesOpen ? 'Hide records' : 'Past 20 records'}</button>
-          <button type="button" className="auth-status" onClick={() => setIsAuthOpen(true)} aria-label={authUser ? `Account ${authUser.email}` : 'Log in or create account'}>
+          <button type="button" className="auth-status" onClick={() => setIsAuthOpen(true)} aria-label={authUser ? `${techName} · Account ${authUser.email}` : `${techName} · Log in or create account`}>
             <span className="auth-status-name">{techName}</span>
             <span className="auth-status-detail">{authUser ? authUser.email : 'Local only · Log in'}</span>
           </button>
