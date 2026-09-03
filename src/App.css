@@ -352,6 +352,9 @@ h2 { margin: 0; font: 600 1.55rem/1.1 Georgia, serif; color: var(--ink); }
 .layout-element-spacing { display: flex; gap: 8px; }
 .layout-element-spacing label { display: grid; gap: 4px; color: var(--muted); font-size: 0.68rem; font-weight: 700; white-space: nowrap; }
 .layout-element-spacing input { width: 58px; padding: 6px 8px; }
+.layout-element-hidden { display: flex; align-items: center; }
+.layout-element-hidden label { display: flex; align-items: center; gap: 6px; cursor: pointer; color: var(--ink); font-size: 0.8rem; font-weight: 700; user-select: none; }
+.layout-element-hidden input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; accent-color: var(--teal); }
 .layout-remove-button { flex: 0 0 auto; width: 28px; height: 28px; font-size: 1.35rem; }
 .layout-element-handle { color: var(--muted); font-size: 1.2rem; }
 .output-preview { margin-top: 28px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); box-shadow: 0 8px 24px rgba(27, 54, 58, 0.05); }

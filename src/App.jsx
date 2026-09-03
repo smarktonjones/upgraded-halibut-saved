@@ -1917,6 +1917,12 @@ function LayoutModal({ layout, note, onCancel, onSave }) {
     )));
   }
 
+  function toggleElementHidden(id) {
+    setDraftLayout((currentLayout) => currentLayout.map((element) => (
+      element.id === id ? { ...element, hidden: !element.hidden } : element
+    )));
+  }
+
   function updateElementSpacing(id, property, value) {
     const safeValue = Math.max(0, Number(value) || 0);
     setDraftLayout((currentLayout) => currentLayout.map((element) => (
@@ -1981,6 +1987,18 @@ function LayoutModal({ layout, note, onCancel, onSave }) {
                     <input aria-label={`Text label ${index + 1}`} value={element.label} onChange={(event) => setDraftLayout((currentLayout) => currentLayout.map((item) => item.id === element.id ? { ...item, label: event.target.value } : item))} onClick={(event) => event.stopPropagation()} />
                   </label>
                 ) : <span className="layout-element-label">{external}</span>}
+                <div className="layout-element-hidden">
+                  <label>
+                    <input
+                      type="checkbox"
+                      aria-label={`Hide ${element.type === 'return' ? 'Returns' : element.type === 'space' ? 'Spaces' : element.type === 'label' ? (element.label || 'label') : external}`}
+                      checked={Boolean(element.hidden)}
+                      onChange={() => toggleElementHidden(element.id)}
+                      onClick={(event) => event.stopPropagation()}
+                    />
+                    <span>Hidden</span>
+                  </label>
+                </div>
                 {element.type !== 'return' && element.type !== 'space' && (
                   <div className="layout-element-spacing">
                     <label>Returns before<input aria-label={`Returns before ${external}`} type="number" min="0" value={element.returnsBefore ?? 0} onChange={(event) => updateElementSpacing(element.id, 'returnsBefore', event.target.value)} onClick={(event) => event.stopPropagation()} /></label>
@@ -2095,6 +2113,7 @@ function OutputPreview({ layout, note, onReset, onCopy }) {
     return `${component.externalLabel || component.label}${classes.length ? `\n${classes.join('\n')}` : ''}`;
   }
   const generatedOutput = orderedLayout
+    .filter((element) => !element.hidden)
     .map((element) => {
       const spacingBefore = `${'\n'.repeat(Math.max(0, Number(element.returnsBefore) || 0))}${' '.repeat(Math.max(0, Number(element.spacesBefore) || 0))}`;
       if (element.type === 'return') return '\n'.repeat(Math.max(0, Number(element.count) || 0));
@@ -2135,19 +2154,19 @@ function OutputPreview({ layout, note, onReset, onCopy }) {
         return content ? `${spacingBefore}${internalLabel?.trim() ? `${internalLabel}: ` : ''}${content}` : '';
       }
 
-      // Charting components: show as "InternalLabel: summary" with default 'None.' and no extra returns
+      // Charting components: show content directly without label
       if (element.id === 'caries' || element.id === 'incipientCaries') {
         const summary = summaries[element.id] || '';
-        return `${spacingBefore}${internalLabel}: ${summary.trim() || 'None.'}`;
+        return `${spacingBefore}${summary.trim() || 'None.'}`;
       }
 
-      // Completed: only include if there is content (either summary or text entered)
+      // Completed: show summary or text content directly without label
       if (element.id === 'completed') {
         const summary = summaries[element.id] || '';
         const text = textComponent?.text?.trim() || '';
         if (!summary.trim() && !text) return '';
         const content = text || summary || 'None.';
-        return `${spacingBefore}${internalLabel}: ${content}`;
+        return `${spacingBefore}${content}`;
       }
 
       if (textComponent?.moduleKind === 'oap') {
