@@ -438,10 +438,25 @@ test('orders chart output elements through the layout modal and preview', () => 
     { id: 'incipientCaries', label: 'Incipient Caries', order: 3 },
   ]);
   const preview = screen.getByRole('textbox', { name: 'Output preview' });
-  expect(preview.value.indexOf('Completed')).toBeLessThan(preview.value.indexOf('Caries / Defective'));
-  expect(preview.value.indexOf('Caries / Defective')).toBeLessThan(preview.value.indexOf('Incipient Caries'));
+  expect(preview.value).toBe('None.None.');
   fireEvent.change(preview, { target: { value: 'Edited output draft.' } });
   expect(preview.value).toBe('Edited output draft.');
+});
+
+test('hides elements from output preview when hidden checkbox is checked', () => {
+  render(<App />);
+  fireEvent.click(screen.getByRole('button', { name: 'Layout' }));
+  const layoutDialog = screen.getByRole('dialog', { name: /layout/i });
+
+  fireEvent.click(screen.getByLabelText('Hide Caries / Defective'));
+  fireEvent.click(screen.getByRole('button', { name: /save layout/i }));
+
+  const savedNote = JSON.parse(window.localStorage.getItem('dental-note-maker.note'));
+  expect(savedNote.layout.find((el) => el.id === 'caries')?.hidden).toBe(true);
+
+  const preview = screen.getByRole('textbox', { name: 'Output preview' });
+  // Caries is hidden, only incipientCaries shows 'None.'
+  expect(preview.value).toBe('None.');
 });
 
 test('adds configurable returns and spaces to the output layout', () => {
@@ -462,8 +477,7 @@ test('adds configurable returns and spaces to the output layout', () => {
 
   const preview = screen.getByRole('textbox', { name: 'Output preview' });
   expect(preview.value.startsWith('   ')).toBe(true);
-  expect(preview.value).toContain('Caries / Defective: None.');
-  expect(preview.value).toContain('Incipient Caries: None.');
+  expect(preview.value).toContain('None.');
   expect(preview.value).toContain('\n\n');
   expect(JSON.parse(window.localStorage.getItem('dental-note-maker.note')).layout).toEqual(expect.arrayContaining([
     expect.objectContaining({ type: 'return', count: 2 }),
@@ -480,7 +494,7 @@ test('saves and applies returns and spaces before an individual layout component
   fireEvent.click(screen.getByRole('button', { name: /save layout/i }));
 
   const preview = screen.getByRole('textbox', { name: 'Output preview' });
-  expect(preview.value).toContain('\n\n   Caries / Defective: None.');
+  expect(preview.value).toContain('\n\n   None.');
   expect(JSON.parse(window.localStorage.getItem('dental-note-maker.note')).layout[0]).toMatchObject({
     id: 'caries',
     returnsBefore: 2,
